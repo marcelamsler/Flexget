@@ -4,12 +4,20 @@ import copy
 import functools
 import logging
 
+from sqlalchemy import Column, ForeignKey, Integer, Unicode
+from sqlalchemy.ext.declarative import declared_attr
+from sqlalchemy.orm import relationship, object_session, backref
+from sqlalchemy.ext.hybrid import hybrid_property, Comparator
+
+from flexget.db_schema import versioned_base
 from flexget.plugin import PluginError
+from flexget.utils.database import json_synonym
 from flexget.utils.lazy_dict import LazyDict, LazyLookup
 from flexget.utils.template import render_from_entry
 
 log = logging.getLogger('entry')
 
+Base = versioned_base('entry_storage', 0)
 
 class EntryUnicodeError(Exception):
     """This exception is thrown when trying to set non-unicode compatible field value to entry."""
@@ -286,3 +294,72 @@ class Entry(LazyDict):
 
     def __repr__(self):
         return '<Entry(title=%s,state=%s)>' % (self['title'], self._state)
+
+
+class DBEntry(Base):
+    __tablename__ = 'entry_storage'
+
+    id = Column(Integer, primary_key=True)
+    _entry_data = Column(Unicode)
+    entry_data = json_synonym('_entry_data')
+
+    def __init__(self, entry):
+        self.id = hash(entry)
+        self.entry_data = entry
+
+    def to_entry(self):
+        return Entry(self.entry_data)
+
+    @staticmethod
+    def from_entry(session, entry):
+        """
+        Returns the `DBEntry` instance for a given `Entry` instance.
+        Creates the row in db if needed, otherwise returns the existing row and updates fields in the stored entry.
+        """
+        obj = session.query(DBEntry).filter(DBEntry.id == hash(entry)).first()
+        if not obj:
+            obj = DBEntry(entry)
+            session.add(obj)
+        else:
+            # Update db with new fields
+            entry_data = obj.entry_data
+            entry_data.update(entry)
+            obj.entry_data = entry_data
+        return obj
+
+
+class EntryComparator(Comparator):
+    def operate(self, op, other):
+        if not isinstance(other, Entry):
+            raise TypeError('cannot compare entry column to type `%s`' % type(other))
+        return op(self.__clause_element__(), hash(other))
+
+
+class EntryColumnMixin(object):
+    """
+    Use this class as a mixin when you want to create a db model which stores a persistent reference to a given
+    :class:`Entry`. The `entry` column can be store and retrieve `Entry` instances directly, and can compare against
+    entry instances directly in sqlalchemy queries.
+    """
+    @declared_attr
+    def entry_id(cls):
+        return Column(Integer, ForeignKey(DBEntry.id))
+
+    @declared_attr
+    def _entry(cls):
+        return relationship(DBEntry, backref=backref('history', cascade='all, delete-orphan'))
+
+    @hybrid_property
+    def entry(self):
+        if self._entry:
+            return self._entry.to_entry()
+
+    @entry.setter
+    def entry(self, value):
+        self._entry = DBEntry.from_entry(object_session(self), value)
+
+    @entry.comparator
+    def entry(self):
+        return EntryComparator(self.entry_id)
+
+
