@@ -5,18 +5,33 @@ from datetime import datetime
 
 from flask import jsonify
 
-from sqlalchemy import Column, String, Integer, DateTime, Unicode, desc
+from sqlalchemy import Column, String, Integer, DateTime, Unicode, desc, select, update
 
-from flexget import options, plugin
+from flexget import db_schema, options, plugin
 from flexget.api import api, APIResource
+from flexget.entry import EntryColumnMixin, DBEntry, Entry
 from flexget.event import event
 from flexget.logger import console
-from flexget.manager import Base, Session
+from flexget.manager import Session
+from flexget.utils.sqlalchemy_utils import table_schema, table_add_column
 
 log = logging.getLogger('history')
+Base = db_schema.versioned_base('history', -1)
 
 
-class History(Base):
+@db_schema.upgrade('history')
+def upgrade(ver, session):
+    if ver is None:
+        history_table = table_schema('history', session)
+        table_add_column(history_table, 'entry_id', Integer, session)
+        for row in session.execute(select([history_table.c.id, history_table.c.title, history_table.c.url])):
+            db_entry = DBEntry.from_entry(session, Entry(title=row['title'], url=row['url']))
+            session.execute(update(history_table, history_table.c.id == row['id'], {'entry_id': db_entry.id}))
+        ver = 0
+    return ver
+
+
+class History(EntryColumnMixin, Base):
 
     __tablename__ = 'history'
 
@@ -56,17 +71,19 @@ class PluginHistory(object):
         if config is False:
             return  # Explicitly disabled with configuration
 
-        for entry in task.accepted:
-            item = History()
-            item.task = task.name
-            item.filename = entry.get('output', None)
-            item.title = entry['title']
-            item.url = entry['url']
-            reason = ''
-            if 'reason' in entry:
-                reason = ' (reason: %s)' % entry['reason']
-            item.details = 'Accepted by %s%s' % (entry.get('accepted_by', '<unknown>'), reason)
-            task.session.add(item)
+        with Session() as session:
+            for entry in task.accepted:
+                item = History()
+                item.task = task.name
+                item.filename = entry.get('output', None)
+                item.title = entry['title']
+                item.url = entry['url']
+                reason = ''
+                if 'reason' in entry:
+                    reason = ' (reason: %s)' % entry['reason']
+                item.details = 'Accepted by %s%s' % (entry.get('accepted_by', '<unknown>'), reason)
+                session.add(item)
+                item.entry = entry
 
 
 def do_cli(manager, options):
