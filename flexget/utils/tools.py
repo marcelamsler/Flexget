@@ -414,6 +414,13 @@ class TimedDict(MutableMapping):
     def __init__(self, cache_time='5 minutes'):
         self.cache_time = parse_timedelta(cache_time)
         self._store = dict()
+        self._last_prune = datetime.now()
+
+    def _prune(self):
+        """Deletes expired items from our dict."""
+        for key in self:
+            # Just using traversing our iterator will clear out any expired items
+            pass
 
     def __getitem__(self, key):
         add_time, value = self._store[key]
@@ -425,6 +432,9 @@ class TimedDict(MutableMapping):
 
     def __setitem__(self, key, value):
         self._store[key] = (datetime.now(), value)
+        # Clean up once every cache_time
+        if self._last_prune < datetime.now() - self.cache_time:
+            self._prune()
 
     def __delitem__(self, key):
         del self._store[key]

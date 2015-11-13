@@ -19,6 +19,7 @@ from flexget.utils import requests
 from flexget.utils.database import with_session
 from flexget.utils.simple_persistence import SimplePersistence
 from flexget.logger import console
+from utils.tools import TimedDict
 
 Base = db_schema.versioned_base('api_trakt', 3)
 log = logging.getLogger('api_trakt')
@@ -624,6 +625,8 @@ def get_trakt(style=None, title=None, year=None, trakt_id=None, trakt_slug=None,
 
 
 class ApiTrakt(object):
+    # Stores user's collected/watched data for 15 minutes to avoid repeated lookups
+    user_api_cache = TimedDict(cache_time='15 minutes')
 
     @staticmethod
     @with_session
@@ -698,12 +701,14 @@ class ApiTrakt(object):
     @staticmethod
     def collected(username, style, trakt_data, title, account=None):
         url = get_api_url('users', username, 'collection', style + 's')
-        session = get_session(account=account)
-        try:
-            log.debug('Opening %s' % url)
-            data = session.get(url).json()
-        except requests.RequestException as e:
-            raise plugin.PluginError('Unable to get data from trakt.tv: %s' % e)
+        data = ApiTrakt.user_api_cache.get(url)
+        if not data:
+            session = get_session(account=account)
+            try:
+                log.debug('Opening %s' % url)
+                data = ApiTrakt.user_api_cache[url] = session.get(url).json()
+            except requests.RequestException as e:
+                raise plugin.PluginError('Unable to get data from trakt.tv: %s' % e)
 
         if not data:
             log.warning('No collection data returned from trakt.')
@@ -733,12 +738,14 @@ class ApiTrakt(object):
     @staticmethod
     def watched(username, style, trakt_data, title, account=None):
         url = get_api_url('users', username, 'history', style + 's', trakt_data.id)
-        session = get_session(account=account)
-        try:
-            log.debug('Opening %s' % url)
-            data = session.get(url).json()
-        except requests.RequestException as e:
-            raise plugin.PluginError('Unable to get data from trakt.tv: %s' % e)
+        data = ApiTrakt.user_api_cache.get(url)
+        if not data:
+            session = get_session(account=account)
+            try:
+                log.debug('Opening %s' % url)
+                data = ApiTrakt.user_api_cache[url] = session.get(url).json()
+            except requests.RequestException as e:
+                raise plugin.PluginError('Unable to get data from trakt.tv: %s' % e)
 
         if not data:
             log.warning('No data returned from trakt.')
