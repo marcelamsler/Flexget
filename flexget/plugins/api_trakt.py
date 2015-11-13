@@ -13,13 +13,13 @@ from flexget import plugin
 from flexget import options
 from flexget.db_schema import upgrade
 from flexget.event import event
+from flexget.logger import console
 from flexget.manager import Session
 from flexget.plugin import get_plugin_by_name
 from flexget.utils import requests
 from flexget.utils.database import with_session
 from flexget.utils.simple_persistence import SimplePersistence
-from flexget.logger import console
-from utils.tools import TimedDict
+from flexget.utils.tools import TimedDict
 
 Base = db_schema.versioned_base('api_trakt', 3)
 log = logging.getLogger('api_trakt')
@@ -625,6 +625,7 @@ def get_trakt(style=None, title=None, year=None, trakt_id=None, trakt_slug=None,
 
 
 class ApiTrakt(object):
+    # TODO: This is a quick fix to prevent grabbing collection/watched info many times in a task. Should it be changed?
     # Stores user's collected/watched data for 15 minutes to avoid repeated lookups
     user_api_cache = TimedDict(cache_time='15 minutes')
 
